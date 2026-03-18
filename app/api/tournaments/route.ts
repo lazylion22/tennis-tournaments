@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Redis } from "@upstash/redis";
 
-const CACHE_DURATION_MS = 12 * 60 * 60 * 1000; // 12 hours
+const CACHE_TTL_SECONDS = 12 * 60 * 60; // 12 hours
+const CACHE_KEY = "tournaments:all";
 const CURRENT_YEAR = new Date().getFullYear();
-const BASE_URL = "https://api.balldontlie.io/atp/v1/tournaments";
+
+const redis = new Redis({
+  url: process.env.KV_REST_API_URL!,
+  token: process.env.KV_REST_API_TOKEN!,
+});
 
 interface Tournament {
   id: number;
@@ -23,15 +29,17 @@ interface ApiResponse {
   meta: { next_cursor: number | null; per_page: number };
 }
 
+interface CachedPayload {
+  atp: Tournament[];
+  wta: Tournament[];
+  fetchedAt: number;
+}
+
 async function fetchAllTournaments(tour: "atp" | "wta"): Promise<Tournament[]> {
   const key = process.env.BALLDONTLIE_KEY;
   if (!key) throw new Error("BALLDONTLIE_KEY is not set");
 
-  const endpoint =
-    tour === "atp"
-      ? `${BASE_URL}?season=${CURRENT_YEAR}`
-      : `https://api.balldontlie.io/wta/v1/tournaments?season=${CURRENT_YEAR}`;
-
+  const endpoint = `https://api.balldontlie.io/${tour}/v1/tournaments?season=${CURRENT_YEAR}`;
   const all: Tournament[] = [];
   let cursor: number | null = null;
 
@@ -60,47 +68,47 @@ function isCurrentlyRunning(tournament: Tournament): boolean {
   return today >= start && today <= end;
 }
 
-// Simple in-memory server-side cache
-let serverCache: {
-  atp: Tournament[];
-  wta: Tournament[];
-  fetchedAt: number;
-} | null = null;
-
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const forceRefresh = searchParams.get("cache") === "pls";
 
-  const now = Date.now();
-  const cacheValid =
-    serverCache !== null &&
-    now - serverCache.fetchedAt < CACHE_DURATION_MS &&
-    !forceRefresh;
-
-  if (!cacheValid) {
-    try {
-      const [atpAll, wtaAll] = await Promise.all([
-        fetchAllTournaments("atp"),
-        fetchAllTournaments("wta"),
-      ]);
-
-      serverCache = {
-        atp: atpAll,
-        wta: wtaAll,
-        fetchedAt: now,
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return NextResponse.json({ error: message }, { status: 500 });
+  // Attempt to load from Redis unless force-refreshing
+  if (!forceRefresh) {
+    const cached = await redis.get<CachedPayload>(CACHE_KEY);
+    if (cached) {
+      return NextResponse.json({
+        atp: cached.atp.filter(isCurrentlyRunning),
+        wta: cached.wta.filter(isCurrentlyRunning),
+        fetchedAt: cached.fetchedAt,
+        fromCache: true,
+      });
     }
   }
 
-  const cache = serverCache!;
+  // Cache miss or forced refresh — fetch from the API
+  try {
+    const [atpAll, wtaAll] = await Promise.all([
+      fetchAllTournaments("atp"),
+      fetchAllTournaments("wta"),
+    ]);
 
-  return NextResponse.json({
-    atp: cache.atp.filter(isCurrentlyRunning),
-    wta: cache.wta.filter(isCurrentlyRunning),
-    fetchedAt: cache.fetchedAt,
-    fromCache: cacheValid,
-  });
+    const payload: CachedPayload = {
+      atp: atpAll,
+      wta: wtaAll,
+      fetchedAt: Date.now(),
+    };
+
+    // Persist to Redis with a 12-hour TTL
+    await redis.set(CACHE_KEY, payload, { ex: CACHE_TTL_SECONDS });
+
+    return NextResponse.json({
+      atp: payload.atp.filter(isCurrentlyRunning),
+      wta: payload.wta.filter(isCurrentlyRunning),
+      fetchedAt: payload.fetchedAt,
+      fromCache: false,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
