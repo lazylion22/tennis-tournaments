@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { TournamentCard } from "@/components/tournament-card";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { RefreshCw } from "lucide-react";
 
 interface Tournament {
@@ -55,11 +56,11 @@ export default function TournamentsPage() {
 
   const cacheTime = data?.fetchedAt
     ? new Date(data.fetchedAt).toLocaleString("en-US", {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
     : null;
 
   const totalRunning = (data?.atp.length ?? 0) + (data?.wta.length ?? 0);
@@ -83,16 +84,7 @@ export default function TournamentsPage() {
               )}
             </div>
           </div>
-
-          <button
-            onClick={() => fetchData(true)}
-            disabled={loading}
-            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 px-3 py-1.5 rounded-lg border border-border hover:border-primary/40 bg-background"
-            title="Force refresh cache"
-          >
-            <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
+          <ThemeToggle />
         </div>
       </header>
 

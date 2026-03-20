@@ -53,7 +53,7 @@ export function TournamentCard({ tournament, tour }: TournamentCardProps) {
   const query = encodeURIComponent(
     `${tour === "ATP" ? "Men" : "Women"} ${tournament.name} tennis`
   );
-  const googleUrl = `https://www.google.com/search?q=${query}`;
+  const googleUrl = `https://www.google.com/search?q=${query}&num=10`;
 
   const prize = formatPrize(tournament.prize_money, tournament.prize_currency);
 
